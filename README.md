@@ -120,7 +120,7 @@ pip install flask flask-cors
 ### 3. Run the application
 
 ``` bash
-python "app.py"
+python app.py
 ```
 
 ### 4. Open in your browser
