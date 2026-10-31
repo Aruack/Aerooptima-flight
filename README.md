@@ -85,7 +85,7 @@ uses an Earth radius of **6,371 km**.
 
 ``` text
 AeroOptima/
-├── app(1).py       # Flask backend, airport data, graph and algorithms
+├── app.py       # Flask backend, airport data, graph and algorithms
 ├── index.html      # Frontend interface and interactive map
 └── README.md       # Project documentation
 ```
@@ -104,8 +104,8 @@ AeroOptima/
 ### 1. Clone the repository
 
 ``` bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
-cd <YOUR_REPOSITORY_FOLDER>
+git clone https://github.com/Aruack/Aerooptima-flight
+cd Aerooptima-flight
 ```
 
 Replace the placeholders with your actual GitHub repository URL and
@@ -120,7 +120,7 @@ pip install flask flask-cors
 ### 3. Run the application
 
 ``` bash
-python "app(1).py"
+python "app.py"
 ```
 
 ### 4. Open in your browser
