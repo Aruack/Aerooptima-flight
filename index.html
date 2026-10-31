@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AeroOptima - Flight Route Optimization (DAA)</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body { background: #070b12; color: #f1f5f9; font-family: system-ui, sans-serif; }
+    .glass { background: rgba(17, 24, 39, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
+    #map { height: 500px; width: 100%; min-height: 500px; border-radius: 12px; z-index: 1; }
+    .pulse-src { background: #10b981; border: 2px solid #fff; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 10px; box-shadow: 0 0 14px #10b981; }
+    .pulse-dst { background: #ef4444; border: 2px solid #fff; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 10px; box-shadow: 0 0 14px #ef4444; }
+    .pulse-hub { background: #0ea5e9; border: 2px solid #fff; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 9px; }
+    .marker-dot { background: #475569; border: 2px solid #94a3b8; border-radius: 50%; cursor: pointer; transition: transform 0.2s; }
+    .marker-dot:hover { background: #38bdf8; border-color: #fff; transform: scale(1.6); }
+  </style>
+</head>
+<body class="p-3 md:p-6 min-h-screen flex flex-col">
+  <div class="max-w-6xl mx-auto w-full space-y-4 flex-1">
+    
+    <!-- Header -->
+    <header class="glass p-4 rounded-xl flex flex-wrap justify-between items-center gap-3">
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-xl font-black text-sky-400">✈️ AeroOptima</h1>
+          <span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-sky-950 border border-sky-800 text-sky-300">DAA Mini Project</span>
+        </div>
+        <p class="text-xs text-slate-400">Flight Route Optimization (Dijkstra vs Recursive Backtracking)</p>
+      </div>
+
+      <!-- Mode Switcher -->
+      <div class="flex bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs font-semibold gap-1">
+        <button id="tab-dijkstra" onclick="switchMode('dijkstra')" class="px-3 py-1.5 rounded bg-sky-600 text-white transition-all">
+          1. Dijkstra (Shortest)
+        </button>
+        <button id="tab-backtrack" onclick="switchMode('backtracking')" class="px-3 py-1.5 rounded text-slate-400 hover:text-white transition-all">
+          2. Backtracking (Alternatives)
+        </button>
+        <button id="tab-benchmark" onclick="switchMode('benchmark')" class="px-3 py-1.5 rounded text-slate-400 hover:text-white transition-all">
+          3. DAA Benchmarks
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace (Map + Controls) -->
+    <div id="workspace-view" class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      
+      <!-- Interactive Leaflet Map Container -->
+      <div class="lg:col-span-7 glass rounded-xl p-2 relative shadow-2xl overflow-hidden">
+        <div id="map"></div>
+        <div class="absolute bottom-4 left-4 z-[400] glass px-3 py-2 text-[11px] space-y-1 rounded-lg">
+          <div class="font-bold text-slate-200 uppercase text-[10px]">Radar Legend</div>
+          <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Origin Airport</div>
+          <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-red-500"></span> Destination</div>
+          <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span> Layover Hub</div>
+          <div class="flex items-center gap-2"><span class="w-3 h-0.5 bg-sky-400"></span> Active Flight Route</div>
+        </div>
+      </div>
+
+      <!-- Controls & Results Column -->
+      <div class="lg:col-span-5 space-y-4">
+        
+        <!-- Controls Panel -->
+        <div class="glass p-4 rounded-xl space-y-3">
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[11px] font-bold text-emerald-400 block mb-1">SOURCE ORIGIN</label>
+              <select id="select-src" onchange="onAirportChange()" class="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-white"></select>
+            </div>
+            <div>
+              <label class="text-[11px] font-bold text-rose-400 block mb-1">DESTINATION</label>
+              <select id="select-dst" onchange="onAirportChange()" class="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-white"></select>
+            </div>
+          </div>
+
+          <!-- Backtracking Specific Parameters -->
+          <div id="bt-controls" class="hidden space-y-2 pt-2 border-t border-slate-800 text-xs">
+            <div class="flex justify-between items-center">
+              <span>Max Intermediate Layovers: <b id="lbl-stops" class="text-purple-400">2 Stops</b></span>
+              <input type="range" id="input-stops" min="0" max="3" value="2" oninput="document.getElementById('lbl-stops').innerText = this.value + ' Stops'" class="accent-purple-500 w-28" />
+            </div>
+            <div>
+              <span class="text-[11px] text-slate-400 block mb-1">Excluded Hubs (Click to toggle bypass):</span>
+              <div id="exclude-chips" class="flex flex-wrap gap-1"></div>
+            </div>
+          </div>
+
+          <button id="btn-run" onclick="executeCurrentAlgorithm()" class="w-full py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 font-bold rounded text-xs text-white shadow-lg transition-all">
+            Calculate Optimal Flight Route
+          </button>
+        </div>
+
+        <!-- Dynamic Results Panel -->
+        <div id="results-panel" class="glass p-4 rounded-xl space-y-2 text-xs">
+          <div class="text-slate-400 text-center py-4">Click "Calculate" to compute optimal flight route.</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- DAA Benchmark Table View -->
+    <div id="benchmark-view" class="hidden glass p-5 rounded-xl space-y-4">
+      <div class="flex justify-between items-center pb-2 border-b border-slate-800">
+        <div>
+          <h3 class="text-sm font-bold text-slate-100">DAA Performance Comparison: Dijkstra vs Backtracking</h3>
+          <p class="text-xs text-slate-400">Evaluates runtime (ms), nodes settled, and DFS search tree expansion.</p>
+        </div>
+        <button onclick="runBenchmarkSuite()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold rounded text-white transition-all">
+          Execute Benchmark Suite
+        </button>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs font-mono border-collapse">
+          <thead>
+            <tr className="border-b border-slate-800 text-slate-400 text-[11px] bg-slate-900/50">
+              <th class="py-2.5 px-3">Flight Corridor</th>
+              <th class="py-2.5 px-3">Dijkstra Dist (km)</th>
+              <th class="py-2.5 px-3">Dijkstra Time (ms)</th>
+              <th class="py-2.5 px-3">Nodes Visited</th>
+              <th class="py-2.5 px-3">Backtrack Routes</th>
+              <th class="py-2.5 px-3">Backtrack Time (ms)</th>
+              <th class="py-2.5 px-3">DFS Calls</th>
+            </tr>
+          </thead>
+          <tbody id="benchmark-tbody" class="divide-y divide-slate-800">
+            <tr><td colspan="7" class="py-6 text-center text-slate-500 font-sans">Click "Execute Benchmark Suite" to run automated tests.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <footer class="text-center text-xs text-slate-500 py-3 mt-4 border-t border-slate-900">
+    AeroOptima &copy; MCA DAA Mini Project • Dijkstra (Greedy) & Recursive Backtracking (DFS with Pruning)
+  </footer>
+
+  <!-- Native JavaScript Application Logic (Fast, Bulletproof & Zero Build Step) -->
+  <script>
+    let map, baseLayer, routeLayer, markersLayer;
+    let airportsList = [];
+    let currentMode = 'dijkstra';
+    let excludedAirports = new Set();
+    let currentBtRoutes = [];
+
+    // Initialize Map and Load Dataset
+    window.addEventListener('DOMContentLoaded', async () => {
+      // 1. Initialize Leaflet
+      map = L.map('map', { center: [25, 45], zoom: 3 });
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+
+      baseLayer = L.layerGroup().addTo(map);
+      routeLayer = L.layerGroup().addTo(map);
+      markersLayer = L.layerGroup().addTo(map);
+
+      setTimeout(() => map.invalidateSize(), 300);
+
+      // 2. Fetch Network Data
+      try {
+        const [apRes, connRes] = await Promise.all([
+          fetch('/api/flights/airports').then(r => r.json()),
+          fetch('/api/flights/connections').then(r => r.json())
+        ]);
+
+        airportsList = apRes.airports || [];
+        populateAirportDropdowns();
+        renderBackgroundConnections(connRes.connections || []);
+        renderExcludeChips();
+
+        // 3. Auto-run initial shortest path (DEL -> LHR)
+        executeCurrentAlgorithm();
+      } catch (err) {
+        console.error("Initialization error:", err);
+        document.getElementById('results-panel').innerHTML = `<div class="text-rose-400">Failed to load flight network: ${err.message}</div>`;
+      }
+    });
+
+    // Populate Source & Destination Selects
+    function populateAirportDropdowns() {
+      const srcSelect = document.getElementById('select-src');
+      const dstSelect = document.getElementById('select-dst');
+      srcSelect.innerHTML = '';
+      dstSelect.innerHTML = '';
+
+      airportsList.forEach(ap => {
+        const opt1 = new Option(`${ap.code} - ${ap.city} (${ap.country})`, ap.code);
+        const opt2 = new Option(`${ap.code} - ${ap.city} (${ap.country})`, ap.code);
+        srcSelect.add(opt1);
+        dstSelect.add(opt2);
+      });
+
+      srcSelect.value = 'DEL';
+      dstSelect.value = 'LHR';
+    }
+
+    // Render background verified flight routes
+    function renderBackgroundConnections(connections) {
+      baseLayer.clearLayers();
+      const mapAps = new Map(airportsList.map(a => [a.code, a]));
+
+      connections.forEach(conn => {
+        const s = mapAps.get(conn.source);
+        const t = mapAps.get(conn.target);
+        if (s && t) {
+          L.polyline([[s.lat, s.lon], [t.lat, t.lon]], {
+            color: '#334155', weight: 1.2, opacity: 0.35, dashArray: '3, 6'
+          }).addTo(baseLayer);
+        }
+      });
+    }
+
+    // Render Exclude Chips
+    function renderExcludeChips() {
+      const container = document.getElementById('exclude-chips');
+      const hubs = ['DXB', 'DOH', 'LHR', 'FRA', 'SIN', 'BOM', 'DEL', 'HKG', 'JFK'];
+      container.innerHTML = '';
+
+      hubs.forEach(h => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `text-[10px] px-2 py-0.5 rounded border transition-all ${
+          excludedAirports.has(h) ? 'bg-rose-900 text-rose-200 border-rose-500 line-through font-bold' : 'bg-slate-800 text-slate-400 border-slate-700'
+        }`;
+        btn.innerText = h;
+        btn.onclick = () => {
+          if (excludedAirports.has(h)) excludedAirports.delete(h);
+          else excludedAirports.add(h);
+          renderExcludeChips();
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    // Switch View Mode
+    function switchMode(mode) {
+      currentMode = mode;
+      document.getElementById('tab-dijkstra').className = mode === 'dijkstra' ? 'px-3 py-1.5 rounded bg-sky-600 text-white' : 'px-3 py-1.5 rounded text-slate-400 hover:text-white';
+      document.getElementById('tab-backtrack').className = mode === 'backtracking' ? 'px-3 py-1.5 rounded bg-purple-600 text-white' : 'px-3 py-1.5 rounded text-slate-400 hover:text-white';
+      document.getElementById('tab-benchmark').className = mode === 'benchmark' ? 'px-3 py-1.5 rounded bg-emerald-600 text-white' : 'px-3 py-1.5 rounded text-slate-400 hover:text-white';
+
+      const workspace = document.getElementById('workspace-view');
+      const benchmarkView = document.getElementById('benchmark-view');
+      const btControls = document.getElementById('bt-controls');
+      const runBtn = document.getElementById('btn-run');
+
+      if (mode === 'benchmark') {
+        workspace.classList.add('hidden');
+        benchmarkView.classList.remove('hidden');
+        runBenchmarkSuite();
+      } else {
+        workspace.classList.remove('hidden');
+        benchmarkView.classList.add('hidden');
+        setTimeout(() => map.invalidateSize(), 200);
+
+        if (mode === 'dijkstra') {
+          btControls.classList.add('hidden');
+          runBtn.innerText = 'Calculate Shortest Route (Dijkstra)';
+          runBtn.className = 'w-full py-2.5 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 font-bold rounded text-xs text-white shadow-lg';
+        } else {
+          btControls.classList.remove('hidden');
+          runBtn.innerText = 'Generate Alternative Routes (Backtracking)';
+          runBtn.className = 'w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 font-bold rounded text-xs text-white shadow-lg';
+        }
+        executeCurrentAlgorithm();
+      }
+    }
+
+    function onAirportChange() {
+      executeCurrentAlgorithm();
+    }
+
+    // Execute Selected Algorithm
+    async function executeCurrentAlgorithm() {
+      const src = document.getElementById('select-src').value;
+      const dst = document.getElementById('select-dst').value;
+      const panel = document.getElementById('results-panel');
+      panel.innerHTML = '<div class="text-slate-400 text-center py-2">Computing route corridors...</div>';
+
+      if (currentMode === 'dijkstra') {
+        try {
+          const res = await fetch('/api/flights/shortest-route', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ source: src, destination: dst })
+          }).then(r => r.json());
+
+          if (!res.success) {
+            panel.innerHTML = `<div class="p-3 bg-rose-950/50 border border-rose-800 rounded text-rose-200">${res.error}</div>`;
+            routeLayer.clearLayers();
+            return;
+          }
+
+          drawPathOnMap(res.path, false);
+          panel.innerHTML = `
+            <div class="space-y-2">
+              <div class="flex justify-between font-mono pb-2 border-b border-slate-800">
+                <span>Distance: <b class="text-sky-400 font-bold">${res.total_distance_km.toLocaleString()} km</b></span>
+                <span>Layovers: <b class="text-emerald-400 font-bold">${res.stops_count}</b></span>
+                <span>Time: <b class="text-amber-400 font-bold">${res.execution_time_ms} ms</b></span>
+              </div>
+              <div class="font-mono text-sm font-bold text-slate-100 py-1">
+                ${res.path.map((c, i) => `<span class="${i===0?'text-emerald-400':i===res.path.length-1?'text-rose-400':'text-sky-300'}">${c}</span>`).join(' ➔ ')}
+              </div>
+              ${res.intermediate_airports.length > 0 ? `<div class="text-[11px] text-slate-400">Intermediate Hubs: <b>${res.intermediate_airports.join(', ')}</b></div>` : '<div class="text-[11px] text-emerald-400">Non-stop Direct Flight Corridor</div>'}
+              <div class="text-[10px] text-slate-500 pt-1">Settled vertices: ${res.visited_nodes} • Complexity: O((V+E)log V)</div>
+            </div>
+          `;
+        } catch (e) {
+          panel.innerHTML = `<div class="text-rose-400">Error: ${e.message}</div>`;
+        }
+      } else {
+        // Backtracking
+        const maxStops = parseInt(document.getElementById('input-stops').value);
+        try {
+          const res = await fetch('/api/flights/alternative-routes', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              source: src,
+              destination: dst,
+              max_stops: maxStops,
+              excluded_airports: Array.from(excludedAirports)
+            })
+          }).then(r => r.json());
+
+          if (!res.success || !res.routes.length) {
+            panel.innerHTML = `<div class="p-3 bg-amber-950/50 border border-amber-800 rounded text-amber-200">No alternative paths found under given constraints. Try increasing max layovers or un-checking excluded hubs.</div>`;
+            routeLayer.clearLayers();
+            return;
+          }
+
+          currentBtRoutes = res.routes;
+          drawPathOnMap(res.routes[0].path, true);
+
+          let html = `
+            <div class="space-y-2">
+              <div class="flex justify-between items-center text-xs font-bold text-purple-300 pb-1 border-b border-slate-800">
+                <span>Alternative Paths (${res.routes_count})</span>
+                <span class="text-[10px] font-mono text-slate-400">DFS calls: ${res.statistics.calls}</span>
+              </div>
+              <div class="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+          `;
+
+          res.routes.forEach((r, idx) => {
+            html += `
+              <div onclick="selectBtRoute(${idx})" class="p-2 rounded border cursor-pointer transition-all ${idx===0 ? 'bg-purple-950/40 border-purple-500' : 'bg-slate-900 border-slate-800 hover:border-slate-700'}">
+                <div class="flex justify-between font-mono text-xs">
+                  <span class="font-bold text-slate-200">Route #${r.route_id} (${r.stops_count} layovers)</span>
+                  <span class="text-purple-300 font-bold">${r.total_distance_km.toLocaleString()} km ${r.detour_km > 0 ? `<span class="text-[10px] text-amber-400 font-normal">(+${r.detour_km} km)</span>` : ''}</span>
+                </div>
+                <div class="text-[11px] text-slate-400 font-mono mt-0.5">${r.path.join(' ➔ ')}</div>
+              </div>
+            `;
+          });
+
+          html += `</div></div>`;
+          panel.innerHTML = html;
+        } catch (e) {
+          panel.innerHTML = `<div class="text-rose-400">Error: ${e.message}</div>`;
+        }
+      }
+    }
+
+    function selectBtRoute(idx) {
+      if (currentBtRoutes[idx]) {
+        drawPathOnMap(currentBtRoutes[idx].path, true);
+      }
+    }
+
+    // Draw active flight route on Leaflet Map
+    function drawPathOnMap(path, isBacktrack) {
+      routeLayer.clearLayers();
+      markersLayer.clearLayers();
+      if (!path || path.length < 2) return;
+
+      const mapAps = new Map(airportsList.map(a => [a.code, a]));
+      const latlngs = path.map(c => {
+        const ap = mapAps.get(c);
+        return ap ? [ap.lat, ap.lon] : null;
+      }).filter(Boolean);
+
+      if (latlngs.length < 2) return;
+
+      // Glow corridor
+      L.polyline(latlngs, { color: '#38bdf8', weight: 8, opacity: 0.25 }).addTo(routeLayer);
+
+      // Main line
+      L.polyline(latlngs, {
+        color: isBacktrack ? '#c084fc' : '#0284c7',
+        weight: 3.5,
+        opacity: 0.95,
+        dashArray: isBacktrack ? '8, 8' : undefined
+      }).addTo(routeLayer);
+
+      // Render Airport Markers
+      const pathSet = new Set(path);
+      const src = path[0];
+      const dst = path[path.length - 1];
+
+      airportsList.forEach(ap => {
+        const isSrc = ap.code === src;
+        const isDst = ap.code === dst;
+        const isLayover = pathSet.has(ap.code) && !isSrc && !isDst;
+
+        let iconClass = 'marker-dot';
+        let html = '';
+        let size = [12, 12];
+
+        if (isSrc) { iconClass = 'pulse-src'; html = ap.code; size = [32, 32]; }
+        else if (isDst) { iconClass = 'pulse-dst'; html = ap.code; size = [32, 32]; }
+        else if (isLayover) { iconClass = 'pulse-hub'; html = ap.code; size = [26, 26]; }
+
+        const icon = L.divIcon({ className: iconClass, html, iconSize: size, iconAnchor: [size[0]/2, size[1]/2] });
+        L.marker([ap.lat, ap.lon], { icon })
+          .bindTooltip(`<b>${ap.code}</b> - ${ap.city}, ${ap.country}`)
+          .addTo(markersLayer);
+      });
+
+      try {
+        map.fitBounds(L.latLngBounds(latlngs), { padding: [50, 50] });
+      } catch(e) {}
+    }
+
+    // Run DAA Benchmark Suite
+    async function runBenchmarkSuite() {
+      const tbody = document.getElementById('benchmark-tbody');
+      tbody.innerHTML = '<tr><td colspan="7" class="py-6 text-center text-slate-400 font-sans">Running benchmarks across transcontinental corridors...</td></tr>';
+
+      try {
+        const res = await fetch('/api/flights/benchmark').then(r => r.json());
+        if (res.results) {
+          tbody.innerHTML = res.results.map(r => `
+            <tr class="hover:bg-slate-800/30 transition-colors">
+              <td class="py-3 px-3 font-sans font-bold text-slate-200">${r.pair}</td>
+              <td class="py-3 px-3 text-sky-400 font-bold">${r.dijkstra_dist.toLocaleString()} km</td>
+              <td class="py-3 px-3 text-amber-400">${r.dijkstra_time_ms} ms</td>
+              <td class="py-3 px-3 text-slate-300">${r.dijkstra_nodes}</td>
+              <td class="py-3 px-3 text-purple-400 font-bold">${r.bt_routes} paths</td>
+              <td class="py-3 px-3 text-emerald-400">${r.bt_time_ms} ms</td>
+              <td class="py-3 px-3 text-slate-400">${r.bt_calls}</td>
+            </tr>
+          `).join('');
+        }
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" class="py-4 text-center text-rose-400 font-sans">Failed to load benchmarks: ${err.message}</td></tr>`;
+      }
+    }
+  </script>
+</body>
+</html>
